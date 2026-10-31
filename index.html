@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AR product preview - Three.js starter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#070809; --panel:#111419; --fg:#f1f0ec; --muted:#8b9099;
+    --line:#232833; --field:#191d24;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+    font-family:"IBM Plex Sans",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  #app{display:grid;grid-template-columns:1fr 340px;height:100%}
+  #view{position:relative;min-width:0}
+  canvas{display:block}
+  #panel{background:var(--panel);border-left:1px solid var(--line);padding:26px 24px;overflow:auto}
+  h1{font-size:14px;font-weight:600;margin:0 0 2px}
+  .lead{font-size:12.5px;color:var(--muted);line-height:1.5;margin:0 0 24px}
+  .row{margin:20px 0}
+  .row label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:9px}
+  .row label b{font-family:"JetBrains Mono",monospace;color:var(--fg);font-weight:500}
+  input[type=range]{width:100%;accent-color:var(--fg);cursor:pointer}
+  .seg{display:flex;gap:6px}
+  .seg button{flex:1;cursor:pointer;border:1px solid var(--line);background:var(--field);
+    color:var(--muted);padding:9px 0;font:inherit;font-size:12px;border-radius:6px;transition:border-color .18s,color .18s}
+  .seg button:hover{color:var(--fg)}
+  .seg button[aria-pressed=true]{border-color:var(--fg);color:var(--fg)}
+  .ar{margin-top:26px;padding-top:20px;border-top:1px solid var(--line)}
+  #arBtn{width:100%;cursor:pointer;border:0;background:var(--fg);color:#0a0a0a;
+    padding:13px;font:inherit;font-size:13px;font-weight:600;border-radius:7px}
+  #arBtn[disabled]{background:var(--field);color:var(--muted);cursor:not-allowed;border:1px solid var(--line)}
+  #arBtn:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+  .arnote{font-size:12px;color:var(--muted);line-height:1.55;margin-top:10px}
+  .foot{margin-top:26px;font-size:12px;color:var(--muted);line-height:1.6}
+  .foot a{color:var(--fg);text-decoration:none;border-bottom:1px solid var(--line)}
+  .foot a:hover{border-color:var(--fg)}
+  @media (max-width:760px){
+    #app{grid-template-columns:1fr;grid-template-rows:60vh auto}
+    #panel{border-left:0;border-top:1px solid var(--line)}
+  }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="app">
+  <div id="view"></div>
+  <aside id="panel">
+    <h1>AR product preview</h1>
+    <p class="lead">Configure an ottoman, then drop it on your real floor through the phone camera. No app install, it runs in the browser.</p>
+
+    <div class="row">
+      <label>Width <b id="wOut">60 cm</b></label>
+      <input id="w" type="range" min="40" max="90" step="5" value="60">
+    </div>
+    <div class="row">
+      <label>Height <b id="hOut">42 cm</b></label>
+      <input id="h" type="range" min="35" max="50" step="1" value="42">
+    </div>
+    <div class="row">
+      <label>Fabric</label>
+      <div class="seg" id="fabric">
+        <button data-c="sand" aria-pressed="true">Sand</button>
+        <button data-c="olive" aria-pressed="false">Olive</button>
+        <button data-c="navy" aria-pressed="false">Navy</button>
+      </div>
+    </div>
+
+    <div class="ar">
+      <button id="arBtn" disabled>Checking AR support...</button>
+      <p class="arnote" id="arnote">AR needs a phone with WebXR (Android Chrome today). On desktop you still get the full 3D preview on the left. See the readme for the iOS path.</p>
+    </div>
+
+    <p class="foot">
+      Built by <a href="https://grodev.pl/en/custom-3d-configurator" target="_blank" rel="noopener">GroDev</a>.
+      I build configurators with AR preview for manufacturers.
+      <a href="https://grodev.pl/konfigurator-produktowy-3d" target="_blank" rel="noopener">grodev.pl</a>.
+    </p>
+  </aside>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+const fabrics = { sand: 0xcdbb97, olive: 0x6b6f46, navy: 0x2b3650 };
+let cfg = { w: 60, h: 42, color: 'sand' };
+
+const view = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.xr.enabled = true;
+view.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x070809);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 50);
+camera.position.set(1.3, 1.0, 1.6);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0, 0.25, 0);
+
+const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+sun.position.set(2, 4, 3);
+sun.castShadow = true;
+scene.add(sun);
+
+const mat = new THREE.MeshStandardMaterial({ color: fabrics.sand, roughness: 0.9, metalness: 0 });
+
+// the ottoman lives in its own group so the same object works on the desk preview and in AR
+const product = new THREE.Group();
+scene.add(product);
+
+function build() {
+  product.clear();
+  const w = cfg.w / 100, h = cfg.h / 100, d = (cfg.w * 0.8) / 100, r = 0.03;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  body.position.y = h / 2;
+  body.castShadow = true;
+  product.add(body);
+  // a soft seam line near the top so it reads as upholstery, not a plain box
+  const seam = new THREE.Mesh(
+    new THREE.BoxGeometry(w + 0.004, 0.012, d + 0.004),
+    new THREE.MeshStandardMaterial({ color: 0x000000, transparent: true, opacity: 0.18, roughness: 1 })
+  );
+  seam.position.y = h - 0.06;
+  product.add(seam);
+}
+
+const wOut = document.getElementById('wOut'), hOut = document.getElementById('hOut');
+document.getElementById('w').addEventListener('input', e => { cfg.w = +e.target.value; wOut.textContent = cfg.w + ' cm'; build(); });
+document.getElementById('h').addEventListener('input', e => { cfg.h = +e.target.value; hOut.textContent = cfg.h + ' cm'; build(); });
+document.getElementById('fabric').addEventListener('click', e => {
+  const btn = e.target.closest('button'); if (!btn) return;
+  cfg.color = btn.dataset.c;
+  for (const b of e.currentTarget.children) b.setAttribute('aria-pressed', b === btn);
+  mat.color.setHex(fabrics[cfg.color]);
+});
+
+build();
+
+// desk preview: a shadow-catching floor. hidden while in AR so the real floor shows through.
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.ShadowMaterial({ opacity: 0.28 }));
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+
+function resize() {
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+// ---- AR: place the configured product where you tap on a real surface ----
+const arBtn = document.getElementById('arBtn');
+const arnote = document.getElementById('arnote');
+let reticle, hitTestSource = null, placed = false;
+
+if ('xr' in navigator) {
+  navigator.xr.isSessionSupported('immersive-ar').then(ok => {
+    if (!ok) { arBtn.textContent = 'AR needs a WebXR phone'; return; }
+    arBtn.disabled = false;
+    arBtn.textContent = 'View in your room';
+    const real = ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] });
+    arBtn.addEventListener('click', () => real.click());
+
+    reticle = new THREE.Mesh(
+      new THREE.RingGeometry(0.07, 0.09, 32).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xffffff })
+    );
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
+    scene.add(reticle);
+
+    renderer.xr.addEventListener('sessionstart', async () => {
+      floor.visible = false;
+      placed = false;
+      product.visible = false;
+      const session = renderer.xr.getSession();
+      const ref = await session.requestReferenceSpace('viewer');
+      hitTestSource = await session.requestHitTestSource({ space: ref });
+      const ctl = renderer.xr.getController(0);
+      ctl.addEventListener('select', () => {
+        if (!reticle.visible) return;
+        product.position.setFromMatrixPosition(reticle.matrix);
+        product.visible = true;
+        placed = true;
+      });
+      scene.add(ctl);
+    });
+    renderer.xr.addEventListener('sessionend', () => {
+      floor.visible = true;
+      product.visible = true;
+      product.position.set(0, 0, 0);
+      hitTestSource = null;
+    });
+  });
+} else {
+  arBtn.textContent = 'AR needs a WebXR phone';
+  arnote.textContent = 'This browser has no WebXR, so the 3D preview on the left is all you get here. The full starter runs AR on a WebXR phone.';
+}
+
+renderer.setAnimationLoop((t, frame) => {
+  if (frame && hitTestSource && !placed) {
+    const ref = renderer.xr.getReferenceSpace();
+    const hits = frame.getHitTestResults(hitTestSource);
+    if (hits.length) {
+      reticle.visible = true;
+      reticle.matrix.fromArray(hits[0].getPose(ref).transform.matrix);
+    } else {
+      reticle.visible = false;
+    }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
